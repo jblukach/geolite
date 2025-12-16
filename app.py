@@ -3,34 +3,47 @@ import os
 
 import aws_cdk as cdk
 
-from maxmind_geolite2.maxmind_geolite2_history import MaxmindGeolite2History
-from maxmind_geolite2.maxmind_geolite2_stack import MaxmindGeolite2Stack
+from geolite.geolite_download import GeoliteDownload
+from geolite.geolite_searchuse1 import GeoliteSearchUSE1
+from geolite.geolite_searchusw2 import GeoliteSearchUSW2
 
 app = cdk.App()
 
-MaxmindGeolite2History(
-    app, 'MaxmindGeolite2History',
+GeoliteDownload(
+    app, 'GeoliteDownload',
+    env = cdk.Environment(
+        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region = 'us-east-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    )
+)
+
+use1 = GeoliteSearchUSE1(
+    app, 'GeoliteSearchUSE1',
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-east-1'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = '4n6ir'
+        qualifier = 'lukach'
     )
 )
 
-MaxmindGeolite2Stack(
-    app, 'MaxmindGeolite2Stack',
+usw2 = GeoliteSearchUSW2(
+    app, 'GeoliteSearchUSW2',
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-east-1'
+        region = 'us-west-2'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = '4n6ir'
+        qualifier = 'lukach'
     )
 )
 
-cdk.Tags.of(app).add('Alias','4n6ir.com')
-cdk.Tags.of(app).add('GitHub','https://github.com/jblukach/maxmind-geolite2')
+cdk.Tags.of(app).add('Alias','geolite')
+cdk.Tags.of(app).add('GitHub','https://github.com/jblukach/geolite')
+cdk.Tags.of(app).add('Org','lukach.io')
 
 app.synth()
