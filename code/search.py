@@ -1,44 +1,18 @@
 import geoip2.database
 import ipaddress
 import json
+import os
 
 def handler(event, context):
 
-    print(event)
-
-    ip = event['rawQueryString']
-
     try:
 
-        ipaddr = ipaddress.ip_address(ip)
-        multicast = ipaddr.is_multicast
-        private = ipaddr.is_private
-        globalpublic = ipaddr.is_global
-        unspecified = ipaddr.is_unspecified
-        reserved = ipaddr.is_reserved
-        loopback = ipaddr.is_loopback
-        link_local = ipaddr.is_link_local
         try:
-            site_local = ipaddr.is_site_local
-        except:
-            site_local = None
-        version = ipaddress.ip_network(ip).version
-        try:
-            ipv4mapped = ipaddr.ipv4_mapped
-        except:
-            ipv4mapped = None
-        try:
-            ipv6mapped = ipaddr.ipv6_mapped
-        except:
-            ipv6mapped = None
-        try:
-            sixtofour = ipaddr.sixtofour
-        except:
-            sixtofour = None
-        try:
-            teredo = ipaddr.teredo
-        except:
-            teredo = None
+            ip = ipaddress.ip_address(event['rawQueryString'])
+            ip = str(event['rawQueryString'])
+        except ValueError:
+            ip = ipaddress.ip_address(event['requestContext']['http']['sourceIp'])
+            ip = str(event['requestContext']['http']['sourceIp'])
 
         try:
             with geoip2.database.Reader('GeoLite2-City.mmdb') as reader:
@@ -86,7 +60,7 @@ def handler(event, context):
 
         code = 200
         msg = {
-            'ip':str(ipaddr),
+            'ip':str(ip),
             'geo': {
                 'country':country_name,
                 'c_iso':country_code,
@@ -103,24 +77,10 @@ def handler(event, context):
                 'org': org,
                 'net': str(net)
             },
-            'ipaddress': {
-                'version': version,
-                'multicast': multicast,
-                'private': private,
-                'global': globalpublic,
-                'unspecified': unspecified,
-                'reserved': reserved,
-                'loopback': loopback,
-                'link_local': link_local,
-                'site_local': site_local,
-                'ipv4_mapped': str(ipv4mapped),
-                'ipv6_mapped': str(ipv6mapped),
-                'sixtofour': str(sixtofour),
-                'teredo': str(teredo)
-            },
             'attribution':desc,
             'geolite2-asn.mmdb':asnupdated,
-            'geolite2-city.mmdb':cityupdated
+            'geolite2-city.mmdb':cityupdated,
+            'region': os.environ['AWS_REGION']
         }
 
     except:

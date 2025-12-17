@@ -37,7 +37,18 @@ class GeoliteSearchUSE1(Stack):
             self, 'bucket',
             bucket_name = 'packages-use1-lukach-io'
         )
-    
+
+        staged = _s3.Bucket(
+            self, 'staged',
+            bucket_name = 'geolite-staged-use1-lukach-io',
+            encryption = _s3.BucketEncryption.S3_MANAGED,
+            block_public_access = _s3.BlockPublicAccess.BLOCK_ALL,
+            removal_policy = RemovalPolicy.DESTROY,
+            auto_delete_objects = True,
+            enforce_ssl = True,
+            versioned = False
+        )
+
     ### LAMBDA LAYERS ###
 
         geoip2 = _lambda.LayerVersion(

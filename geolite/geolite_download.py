@@ -3,6 +3,7 @@ import datetime
 from aws_cdk import (
     Duration,
     RemovalPolicy,
+    SecretValue,
     Size,
     Stack,
     aws_apigatewayv2 as _api,
@@ -17,6 +18,7 @@ from aws_cdk import (
     aws_route53_targets as _r53targets,
     aws_s3 as _s3,
     aws_s3_deployment as _deployment,
+    aws_secretsmanager as _secrets,
     aws_ssm as _ssm
 )
 
@@ -26,6 +28,8 @@ class GeoliteDownload(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        account = Stack.of(self).account
 
         year = datetime.datetime.now().strftime('%Y')
         month = datetime.datetime.now().strftime('%m')
@@ -59,6 +63,16 @@ class GeoliteDownload(Stack):
         bucket = _s3.Bucket.from_bucket_name(
             self, 'bucket',
             bucket_name = 'packages-use2-lukach-io'
+        )
+
+        use1 = _s3.Bucket.from_bucket_name(
+            self, 'use1',
+            bucket_name = 'geolite-staged-use1-lukach-io'
+        )
+
+        usw2 = _s3.Bucket.from_bucket_name(
+            self, 'usw2',
+            bucket_name = 'geolite-staged-usw2-lukach-io'
         )
 
         staged = _s3.Bucket(
@@ -181,6 +195,17 @@ class GeoliteDownload(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
+    ### SECRET MANAGER ###
+
+        secret = _secrets.Secret(
+            self, 'secret',
+            secret_name = 'geolite',
+            secret_object_value = {
+                "api": SecretValue.unsafe_plain_text("<EMPTY>"),
+                "key": SecretValue.unsafe_plain_text("<EMPTY>")
+            }
+        )
+
     ### IAM ROLE ###
 
         role = _iam.Role(
@@ -211,6 +236,56 @@ class GeoliteDownload(Stack):
             )
         )
 
+        secret.grant_read(role)
 
+    ### LAMBDA FUNCTION ###
 
+        download = _lambda.Function(
+            self, 'download',
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            architecture = _lambda.Architecture.ARM_64,
+            code = _lambda.Code.from_asset('download'),
+            handler = 'download.handler',
+            environment = dict(
+                S3_RESEARCH = research.bucket_name,
+                S3_STAGED = staged.bucket_name,
+                S3_USE1 = use1.bucket_name,
+                S3_USW2 = usw2.bucket_name,
+                SECRET_MGR_ARN = secret.secret_arn,
+                SSM_PARAMETER_ASN = '/maxmind/geolite2/asn',
+                SSM_PARAMETER_CITY = '/maxmind/geolite2/city',
+                LAMBDA_FUNCTION_USE1 = 'arn:aws:lambda:us-east-1:'+str(account)+':function:search',
+                LAMBDA_FUNCTION_USW2 = 'arn:aws:lambda:us-west-2:'+str(account)+':function:search'
+            ),
+            ephemeral_storage_size = Size.gibibytes(1),
+            timeout = Duration.seconds(900),
+            memory_size = 1024,
+            role = role,
+            layers = [
+                requests
+            ]
+        )
 
+        logs = _logs.LogGroup(
+            self, 'logs',
+            log_group_name = '/aws/lambda/'+download.function_name,
+            retention = _logs.RetentionDays.ONE_WEEK,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+        event = _events.Rule(
+            self, 'event',
+            schedule = _events.Schedule.cron(
+                minute = '0',
+                hour = '*',
+                month = '*',
+                week_day = '*',
+                year = '*'
+            )
+        )
+
+        event.add_target(
+            _targets.LambdaFunction(
+                download
+            )
+        )

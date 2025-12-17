@@ -8,12 +8,15 @@ import zipfile
 
 def handler(event, context):
 
-    ssm = boto3.client('ssm')
+    secret = boto3.client('secretsmanager')
 
-    account = ssm.get_parameter(
-        Name = os.environ['SSM_PARAMETER_ACCT'], 
-        WithDecryption = True
+    getsecret = secret.get_secret_value(
+        SecretId = os.environ['SECRET_MGR_ARN']
     )
+
+    login = json.loads(getsecret['SecretString'])
+
+    ssm = boto3.client('ssm')
 
     asn = ssm.get_parameter(
         Name = os.environ['SSM_PARAMETER_ASN'], 
@@ -25,11 +28,6 @@ def handler(event, context):
         WithDecryption = False
     )
 
-    secret = ssm.get_parameter(
-        Name = os.environ['SSM_PARAMETER_KEY'], 
-        WithDecryption = True
-    )
-
     s3_client = boto3.client('s3')
 
     year = datetime.datetime.now().strftime('%Y')
@@ -38,7 +36,7 @@ def handler(event, context):
     hour = datetime.datetime.now().strftime('%H')
 
     url = 'https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz'
-    update = requests.head(url, auth=(account['Parameter']['Value'], secret['Parameter']['Value']))
+    update = requests.head(url, auth=(login['api'], login['key']))
 
     print('City:', update.headers['last-modified'])
     with open('/tmp/city.updated', 'w') as f:
@@ -50,7 +48,7 @@ def handler(event, context):
         print("Downloading GeoLite2-City.mmdb")
 
         url = 'https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz'
-        response = requests.get(url, auth=(account['Parameter']['Value'], secret['Parameter']['Value']))
+        response = requests.get(url, auth=(login['api'], login['key']))
         with open('/tmp/maxmind.tar.gz', 'wb') as f:
             f.write(response.content)
         f.close()
@@ -62,15 +60,13 @@ def handler(event, context):
                         r = tar.extractfile(member)
                         if r is not None:
                             content = r.read()
-                        r.close()
-                        w.write(content)
+                            r.close()
+                            w.write(content)
             tar.close()
         w.close()
 
-        response = s3_client.upload_file('/tmp/city.updated',os.environ['S3_BUCKET'],'city.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-City.mmdb',os.environ['S3_BUCKET'],'GeoLite2-City.mmdb')
-        response = s3_client.upload_file('/tmp/city.updated',os.environ['S3_ARCHIVE'],year+'/'+month+'/'+day+'/'+hour+'/city.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-City.mmdb',os.environ['S3_ARCHIVE'],year+'/'+month+'/'+day+'/'+hour+'/GeoLite2-City.mmdb')
+        response = s3_client.upload_file('/tmp/city.updated',os.environ['S3_STAGED'],'city.updated')
+        response = s3_client.upload_file('/tmp/GeoLite2-City.mmdb',os.environ['S3_STAGED'],'GeoLite2-City.mmdb')
         response = s3_client.upload_file('/tmp/city.updated',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/city.updated')
         response = s3_client.upload_file('/tmp/GeoLite2-City.mmdb',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/GeoLite2-City.mmdb')
 
@@ -82,7 +78,7 @@ def handler(event, context):
         )
 
     url = 'https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz'
-    update = requests.head(url, auth=(account['Parameter']['Value'], secret['Parameter']['Value']))
+    update = requests.head(url, auth=(login['api'], login['key']))
 
     print('ASN:', update.headers['last-modified'])
     with open('/tmp/asn.updated', 'w') as f:
@@ -94,7 +90,7 @@ def handler(event, context):
         print("Downloading GeoLite2-ASN.mmdb")
 
         url = 'https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz'
-        response = requests.get(url, auth=(account['Parameter']['Value'], secret['Parameter']['Value']))
+        response = requests.get(url, auth=(login['api'], login['key']))
         with open('/tmp/maxmind2.tar.gz', 'wb') as f:
             f.write(response.content)
         f.close()
@@ -106,15 +102,13 @@ def handler(event, context):
                         r = tar.extractfile(member)
                         if r is not None:
                             content = r.read()
-                        r.close()
-                        w.write(content)
+                            r.close()
+                            w.write(content)
             tar.close()
         w.close()
 
-        response = s3_client.upload_file('/tmp/asn.updated',os.environ['S3_BUCKET'],'asn.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb',os.environ['S3_BUCKET'],'GeoLite2-ASN.mmdb')
-        response = s3_client.upload_file('/tmp/asn.updated',os.environ['S3_ARCHIVE'],year+'/'+month+'/'+day+'/'+hour+'/asn.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb',os.environ['S3_ARCHIVE'],year+'/'+month+'/'+day+'/'+hour+'/GeoLite2-ASN.mmdb')
+        response = s3_client.upload_file('/tmp/asn.updated',os.environ['S3_STAGED'],'asn.updated')
+        response = s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb',os.environ['S3_STAGED'],'GeoLite2-ASN.mmdb')
         response = s3_client.upload_file('/tmp/asn.updated',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/asn.updated')
         response = s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/GeoLite2-ASN.mmdb')
 
@@ -128,19 +122,19 @@ def handler(event, context):
     print("Copying GeoLite2-ASN.mmdb")
 
     with open('/tmp/GeoLite2-ASN.mmdb', 'wb') as f:
-        s3_client.download_fileobj(os.environ['S3_BUCKET'], 'GeoLite2-ASN.mmdb', f) 
+        s3_client.download_fileobj(os.environ['S3_STAGED'], 'GeoLite2-ASN.mmdb', f) 
     f.close()
 
     print("Copying GeoLite2-City.mmdb")
 
     with open('/tmp/GeoLite2-City.mmdb', 'wb') as f:
-        s3_client.download_fileobj(os.environ['S3_BUCKET'], 'GeoLite2-City.mmdb', f) 
+        s3_client.download_fileobj(os.environ['S3_STAGED'], 'GeoLite2-City.mmdb', f) 
     f.close()
 
     print("Copying search.py")
 
     with open('/tmp/search.py', 'wb') as f:
-        s3_client.download_fileobj(os.environ['S3_BUCKET'], 'search.py', f) 
+        s3_client.download_fileobj(os.environ['S3_STAGED'], 'search.py', f) 
     f.close()
 
     print("Packaging geoip2.zip")
@@ -165,15 +159,33 @@ def handler(event, context):
 
     zipf.close()
 
-    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_BUCKET'],'geoip2.zip')
+    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_STAGED'],'geoip2.zip')
 
-    client = boto3.client('lambda')
+    s3_client = boto3.client('s3', region_name = 'us-east-1')
 
-    print("Updating "+os.environ['LAMBDA_FUNCTION'])
+    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_USE1'],'geoip2.zip')
+ 
+    s3_client = boto3.client('s3', region_name = 'us-west-2')
+
+    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_USW2'],'geoip2.zip')
+
+    client = boto3.client('lambda', region_name = 'us-east-1')
+
+    print("Updating "+os.environ['LAMBDA_FUNCTION_USE1'])
 
     response = client.update_function_code(
-        FunctionName = os.environ['LAMBDA_FUNCTION'],
-        S3Bucket = os.environ['S3_BUCKET'],
+        FunctionName = os.environ['LAMBDA_FUNCTION_USE1'],
+        S3Bucket = os.environ['S3_USE1'],
+        S3Key = 'geoip2.zip'
+    )
+
+    client = boto3.client('lambda', region_name = 'us-west-2')
+
+    print("Updating "+os.environ['LAMBDA_FUNCTION_USW2'])
+
+    response = client.update_function_code(
+        FunctionName = os.environ['LAMBDA_FUNCTION_USW2'],
+        S3Bucket = os.environ['S3_USW2'],
         S3Key = 'geoip2.zip'
     )
 
