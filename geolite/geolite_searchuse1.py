@@ -29,8 +29,6 @@ class GeoliteSearchUSE1(Stack):
             parameter_name = '/organization/id'
         )
 
-        orgid = _iam.OrganizationPrincipal(organization.string_value)
-
     ### S3 BUCKET ###
 
         bucket = _s3.Bucket.from_bucket_name(
@@ -129,7 +127,12 @@ class GeoliteSearchUSE1(Stack):
             ]
         )
 
-        search.grant_invoke(orgid)
+        composite = _iam.CompositePrincipal(
+            _iam.OrganizationPrincipal(organization.string_value),
+            _iam.ServicePrincipal('apigateway.amazonaws.com')
+        )
+
+        search.grant_invoke_composite_principal(composite)
 
         logs = _logs.LogGroup(
             self, 'logs',
