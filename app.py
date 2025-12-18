@@ -6,6 +6,7 @@ import aws_cdk as cdk
 from geolite.geolite_download import GeoliteDownload
 from geolite.geolite_searchuse1 import GeoliteSearchUSE1
 from geolite.geolite_searchusw2 import GeoliteSearchUSW2
+from geolite.geolite_stack import GeoliteStack
 
 app = cdk.App()
 
@@ -20,7 +21,7 @@ GeoliteDownload(
     )
 )
 
-use1 = GeoliteSearchUSE1(
+GeoliteSearchUSE1(
     app, 'GeoliteSearchUSE1',
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
@@ -31,11 +32,22 @@ use1 = GeoliteSearchUSE1(
     )
 )
 
-usw2 = GeoliteSearchUSW2(
+GeoliteSearchUSW2(
     app, 'GeoliteSearchUSW2',
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-west-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    )
+)
+
+GeoliteStack(
+    app, 'GeoliteStack',
+    env = cdk.Environment(
+        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region = 'us-east-1'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
         qualifier = 'lukach'
