@@ -259,7 +259,7 @@ class GeoliteDownload(Stack):
             ),
             ephemeral_storage_size = Size.gibibytes(1),
             timeout = Duration.seconds(900),
-            memory_size = 1024,
+            memory_size = 2048,
             role = role,
             layers = [
                 requests
