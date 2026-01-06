@@ -103,7 +103,7 @@ This unified enrichment result provides **location** and **ownership** in one st
 
 ---
 
-## 6. References
+## 5. References
 
 - **MaxMind GeoLite2 Developer Documentation**  
   🔗 [https://dev.maxmind.com/geoip/geolite2-free-geolocation-data](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)
