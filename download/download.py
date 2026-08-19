@@ -1,12 +1,15 @@
 import boto3
-import datetime
 import json
 import os
-import requests
 import tarfile
 import zipfile
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+
+import requests
 
 def handler(event, context):
+    del event, context
 
     secret = boto3.client('secretsmanager')
 
@@ -30,91 +33,90 @@ def handler(event, context):
 
     s3_client = boto3.client('s3')
 
-    year = datetime.datetime.now().strftime('%Y')
-    month = datetime.datetime.now().strftime('%m')
-    day = datetime.datetime.now().strftime('%d')
-    hour = datetime.datetime.now().strftime('%H')
+    def _utc_iso_timestamp(timestamp_value):
+        if not timestamp_value:
+            return datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+        parsed = parsedate_to_datetime(timestamp_value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat().replace('+00:00', 'Z')
+
+    def _download_mmdb_archive(url, archive_path, output_mmdb_path):
+        response = requests.get(url, auth=(login['api'], login['key']), timeout=300)
+        response.raise_for_status()
+        with open(archive_path, 'wb') as file_handle:
+            file_handle.write(response.content)
+
+        with open(output_mmdb_path, 'wb') as output_handle:
+            with tarfile.open(archive_path, 'r:gz') as tar_handle:
+                for member in tar_handle.getmembers():
+                    if os.path.splitext(member.name)[1] == '.mmdb':
+                        extracted = tar_handle.extractfile(member)
+                        if extracted is not None:
+                            output_handle.write(extracted.read())
+                            extracted.close()
+                            return
+
+        raise RuntimeError(f'MMDB file not found in archive from {url}')
 
     url = 'https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz'
-    update = requests.head(url, auth=(login['api'], login['key']))
+    update = requests.head(url, auth=(login['api'], login['key']), timeout=60)
+    update.raise_for_status()
 
-    print('City:', update.headers['last-modified'])
-    with open('/tmp/city.updated', 'w') as f:
-        f.write(update.headers['last-modified'])
+    city_timestamp_utc = _utc_iso_timestamp(update.headers.get('last-modified'))
+
+    print('City:', city_timestamp_utc)
+    with open('/tmp/city.updated', 'w', encoding='utf-8') as f:
+        f.write(city_timestamp_utc)
     f.close()
 
-    if city['Parameter']['Value'] != update.headers['last-modified']:
+    if city['Parameter']['Value'] != city_timestamp_utc:
 
         print("Downloading GeoLite2-City.mmdb")
 
-        url = 'https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz'
-        response = requests.get(url, auth=(login['api'], login['key']))
-        with open('/tmp/maxmind.tar.gz', 'wb') as f:
-            f.write(response.content)
-        f.close()
+        _download_mmdb_archive(
+            url = url,
+            archive_path = '/tmp/maxmind-city.tar.gz',
+            output_mmdb_path = '/tmp/GeoLite2-City.mmdb'
+        )
 
-        with open('/tmp/GeoLite2-City.mmdb', 'wb') as w:
-            with tarfile.open('/tmp/maxmind.tar.gz', 'r:gz') as tar:
-                for member in tar.getmembers():
-                    if os.path.splitext(member.name)[1] == '.mmdb':
-                        r = tar.extractfile(member)
-                        if r is not None:
-                            content = r.read()
-                            r.close()
-                            w.write(content)
-            tar.close()
-        w.close()
-
-        response = s3_client.upload_file('/tmp/city.updated',os.environ['S3_STAGED'],'city.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-City.mmdb',os.environ['S3_STAGED'],'GeoLite2-City.mmdb')
-        response = s3_client.upload_file('/tmp/city.updated',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/city.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-City.mmdb',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/GeoLite2-City.mmdb')
+        s3_client.upload_file('/tmp/city.updated', os.environ['S3_STAGED'], 'city.updated')
+        s3_client.upload_file('/tmp/GeoLite2-City.mmdb', os.environ['S3_STAGED'], 'GeoLite2-City.mmdb')
 
         ssm.put_parameter(
             Name = os.environ['SSM_PARAMETER_CITY'],
-            Value = update.headers['last-modified'],
+            Value = city_timestamp_utc,
             Type = 'String',
             Overwrite = True
         )
 
     url = 'https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz'
-    update = requests.head(url, auth=(login['api'], login['key']))
+    update = requests.head(url, auth=(login['api'], login['key']), timeout=60)
+    update.raise_for_status()
 
-    print('ASN:', update.headers['last-modified'])
-    with open('/tmp/asn.updated', 'w') as f:
-        f.write(update.headers['last-modified'])
+    asn_timestamp_utc = _utc_iso_timestamp(update.headers.get('last-modified'))
+
+    print('ASN:', asn_timestamp_utc)
+    with open('/tmp/asn.updated', 'w', encoding='utf-8') as f:
+        f.write(asn_timestamp_utc)
     f.close()
 
-    if asn['Parameter']['Value'] != update.headers['last-modified']:
+    if asn['Parameter']['Value'] != asn_timestamp_utc:
 
         print("Downloading GeoLite2-ASN.mmdb")
 
-        url = 'https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz'
-        response = requests.get(url, auth=(login['api'], login['key']))
-        with open('/tmp/maxmind2.tar.gz', 'wb') as f:
-            f.write(response.content)
-        f.close()
+        _download_mmdb_archive(
+            url = url,
+            archive_path = '/tmp/maxmind-asn.tar.gz',
+            output_mmdb_path = '/tmp/GeoLite2-ASN.mmdb'
+        )
 
-        with open('/tmp/GeoLite2-ASN.mmdb', 'wb') as w:
-            with tarfile.open('/tmp/maxmind2.tar.gz', 'r:gz') as tar:
-                for member in tar.getmembers():
-                    if os.path.splitext(member.name)[1] == '.mmdb':
-                        r = tar.extractfile(member)
-                        if r is not None:
-                            content = r.read()
-                            r.close()
-                            w.write(content)
-            tar.close()
-        w.close()
-
-        response = s3_client.upload_file('/tmp/asn.updated',os.environ['S3_STAGED'],'asn.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb',os.environ['S3_STAGED'],'GeoLite2-ASN.mmdb')
-        response = s3_client.upload_file('/tmp/asn.updated',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/asn.updated')
-        response = s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb',os.environ['S3_RESEARCH'],year+'/'+month+'/'+day+'/'+hour+'/GeoLite2-ASN.mmdb')
+        s3_client.upload_file('/tmp/asn.updated', os.environ['S3_STAGED'], 'asn.updated')
+        s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb', os.environ['S3_STAGED'], 'GeoLite2-ASN.mmdb')
 
         ssm.put_parameter(
             Name = os.environ['SSM_PARAMETER_ASN'],
-            Value = update.headers['last-modified'],
+            Value = asn_timestamp_utc,
             Type = 'String',
             Overwrite = True
     )
@@ -137,9 +139,9 @@ def handler(event, context):
         s3_client.download_fileobj(os.environ['S3_STAGED'], 'search.py', f) 
     f.close()
 
-    print("Packaging geoip2.zip")
+    print("Packaging maxminddb.zip")
 
-    with zipfile.ZipFile('/tmp/geoip2.zip', 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zipf:
+    with zipfile.ZipFile('/tmp/maxminddb.zip', 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zipf:
 
         zipf.write('/tmp/asn.updated','asn.updated')
         zipf.write('/tmp/city.updated','city.updated')
@@ -147,46 +149,50 @@ def handler(event, context):
         zipf.write('/tmp/GeoLite2-ASN.mmdb','GeoLite2-ASN.mmdb')
         zipf.write('/tmp/GeoLite2-City.mmdb','GeoLite2-City.mmdb')
 
-        for root, dirs, files in os.walk('/tmp/geoip2'):
-            for file in files:
-                fullpath = os.path.join(root, file)
-                zipf.write(fullpath, fullpath[5:])
-
-        for root, dirs, files in os.walk('/tmp/maxminddb'):
-            for file in files:
-                fullpath = os.path.join(root, file)
-                zipf.write(fullpath, fullpath[5:])
-
     zipf.close()
 
-    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_STAGED'],'geoip2.zip')
+    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_STAGED'], 'maxminddb.zip')
 
     s3_client = boto3.client('s3', region_name = 'us-east-1')
 
-    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_USE1'],'geoip2.zip')
+    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_USE1'], 'maxminddb.zip')
+
+    s3_client = boto3.client('s3', region_name = 'us-east-2')
+
+    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_USE2'], 'maxminddb.zip')
  
     s3_client = boto3.client('s3', region_name = 'us-west-2')
 
-    response = s3_client.upload_file('/tmp/geoip2.zip',os.environ['S3_USW2'],'geoip2.zip')
+    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_USW2'], 'maxminddb.zip')
 
     client = boto3.client('lambda', region_name = 'us-east-1')
 
     print("Updating "+os.environ['LAMBDA_FUNCTION_USE1'])
 
-    response = client.update_function_code(
+    client.update_function_code(
         FunctionName = os.environ['LAMBDA_FUNCTION_USE1'],
         S3Bucket = os.environ['S3_USE1'],
-        S3Key = 'geoip2.zip'
+        S3Key = 'maxminddb.zip'
+    )
+
+    client = boto3.client('lambda', region_name = 'us-east-2')
+
+    print("Updating "+os.environ['LAMBDA_FUNCTION_USE2'])
+
+    client.update_function_code(
+        FunctionName = os.environ['LAMBDA_FUNCTION_USE2'],
+        S3Bucket = os.environ['S3_USE2'],
+        S3Key = 'maxminddb.zip'
     )
 
     client = boto3.client('lambda', region_name = 'us-west-2')
 
     print("Updating "+os.environ['LAMBDA_FUNCTION_USW2'])
 
-    response = client.update_function_code(
+    client.update_function_code(
         FunctionName = os.environ['LAMBDA_FUNCTION_USW2'],
         S3Bucket = os.environ['S3_USW2'],
-        S3Key = 'geoip2.zip'
+        S3Key = 'maxminddb.zip'
     )
 
     return {

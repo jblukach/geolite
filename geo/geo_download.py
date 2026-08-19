@@ -19,16 +19,16 @@ from aws_cdk import (
 
 from constructs import Construct
 
-class GeoliteDownload(Stack):
+class GeoDownload(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         account = Stack.of(self).account
 
-        year = datetime.datetime.now().strftime('%Y')
-        month = datetime.datetime.now().strftime('%m')
-        day = datetime.datetime.now().strftime('%d')
+        year = datetime.datetime.now(datetime.UTC).strftime('%Y')
+        month = datetime.datetime.now(datetime.UTC).strftime('%m')
+        day = datetime.datetime.now(datetime.UTC).strftime('%d')
 
     ### PARAMETERS ###
 
@@ -39,7 +39,7 @@ class GeoliteDownload(Stack):
 
         asnparameter = _ssm.StringParameter(
             self, 'asnparameter',
-            parameter_name = '/maxmind/geolite2/asn',
+            parameter_name = '/maxmind/geo/asn',
             string_value = 'EMPTY',
             description = 'MaxMind GeoLite2 ASN Last Updated',
             tier = _ssm.ParameterTier.STANDARD
@@ -47,7 +47,7 @@ class GeoliteDownload(Stack):
 
         cityparameter = _ssm.StringParameter(
             self, 'cityparameter',
-            parameter_name = '/maxmind/geolite2/city',
+            parameter_name = '/maxmind/geo/city',
             string_value = 'EMPTY',
             description = 'MaxMind GeoLite2 City Last Updated',
             tier = _ssm.ParameterTier.STANDARD
@@ -62,17 +62,22 @@ class GeoliteDownload(Stack):
 
         use1 = _s3.Bucket.from_bucket_name(
             self, 'use1',
-            bucket_name = 'geolite-staged-use1-lukach-io'
+            bucket_name = 'geo-staged-use1-lukach-io'
+        )
+
+        use2 = _s3.Bucket.from_bucket_name(
+            self, 'use2',
+            bucket_name = 'geo-staged-use2-lukach-io'
         )
 
         usw2 = _s3.Bucket.from_bucket_name(
             self, 'usw2',
-            bucket_name = 'geolite-staged-usw2-lukach-io'
+            bucket_name = 'geo-staged-usw2-lukach-io'
         )
 
         staged = _s3.Bucket(
             self, 'staged',
-            bucket_name = 'geolite-staged-lukach-io',
+            bucket_name = 'geo-staged-lukach-io',
             encryption = _s3.BucketEncryption.S3_MANAGED,
             block_public_access = _s3.BlockPublicAccess.BLOCK_ALL,
             removal_policy = RemovalPolicy.DESTROY,
@@ -124,53 +129,6 @@ class GeoliteDownload(Stack):
 
         staged.add_to_resource_policy(object_policy_one)
 
-        research = _s3.Bucket(
-            self, 'research',
-            bucket_name = 'geolite-research-lukach-io',
-            encryption = _s3.BucketEncryption.S3_MANAGED,
-            block_public_access = _s3.BlockPublicAccess.BLOCK_ALL,
-            removal_policy = RemovalPolicy.DESTROY,
-            auto_delete_objects = False,
-            enforce_ssl = True,
-            versioned = False
-        )
-
-        bucket_policy_two = _iam.PolicyStatement(
-            effect = _iam.Effect(
-                'ALLOW'
-            ),
-            principals = [
-                _iam.AnyPrincipal()
-            ],
-            actions = [
-                's3:ListBucket'
-            ],
-            resources = [
-                research.bucket_arn
-            ],
-            conditions = {"StringEquals": {"aws:PrincipalOrgID": organization.string_value}}
-        )
-
-        research.add_to_resource_policy(bucket_policy_two)
-
-        object_policy_two = _iam.PolicyStatement(
-            effect = _iam.Effect(
-                'ALLOW'
-            ),
-            principals = [
-                _iam.AnyPrincipal()
-            ],
-            actions = [
-                's3:GetObject'
-            ],
-            resources = [
-                research.arn_for_objects('*')
-            ],
-            conditions = {"StringEquals": {"aws:PrincipalOrgID": organization.string_value}}
-        )
-
-        research.add_to_resource_policy(object_policy_two)
-
     ### LAMBDA LAYER ###
 
         requests = _lambda.LayerVersion(
@@ -194,7 +152,7 @@ class GeoliteDownload(Stack):
 
         secret = _secrets.Secret(
             self, 'secret',
-            secret_name = 'geolite',
+            secret_name = 'geo',
             secret_object_value = {
                 "api": SecretValue.unsafe_plain_text("<EMPTY>"),
                 "key": SecretValue.unsafe_plain_text("<EMPTY>")
@@ -242,14 +200,15 @@ class GeoliteDownload(Stack):
             code = _lambda.Code.from_asset('download'),
             handler = 'download.handler',
             environment = dict(
-                S3_RESEARCH = research.bucket_name,
                 S3_STAGED = staged.bucket_name,
                 S3_USE1 = use1.bucket_name,
+                S3_USE2 = use2.bucket_name,
                 S3_USW2 = usw2.bucket_name,
                 SECRET_MGR_ARN = secret.secret_arn,
-                SSM_PARAMETER_ASN = '/maxmind/geolite2/asn',
-                SSM_PARAMETER_CITY = '/maxmind/geolite2/city',
+                SSM_PARAMETER_ASN = '/maxmind/geo/asn',
+                SSM_PARAMETER_CITY = '/maxmind/geo/city',
                 LAMBDA_FUNCTION_USE1 = 'arn:aws:lambda:us-east-1:'+str(account)+':function:search',
+                LAMBDA_FUNCTION_USE2 = 'arn:aws:lambda:us-east-2:'+str(account)+':function:search',
                 LAMBDA_FUNCTION_USW2 = 'arn:aws:lambda:us-west-2:'+str(account)+':function:search'
             ),
             ephemeral_storage_size = Size.gibibytes(1),

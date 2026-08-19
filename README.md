@@ -20,14 +20,9 @@ Maps an IP address to its **geographic attributes** down to the **city** level.
 
 | **Field** | **Description** | **Use** |
 |------------|------------------|---------|
-| **country** | Country name associated with the IP. | Regional reporting, policy enforcement. |
-| **c_iso** | ISO 3166-1 alpha-2 country code. | Standardized international reference. |
+| **country** | Country name followed by its ISO code when available. | Regional reporting, policy enforcement. |
 | **state** | State or region name. | Regional segmentation or service routing. |
-| **s_iso** | ISO 3166-2 code for the state. | Consistent data integration. |
 | **city** | City associated with the IP. | Targeted analytics, fraud prevention. |
-| **zip** | Postal code. | Demographic or proximity analysis. |
-| **latitude** | Approximate latitude. | Mapping and distance calculations. |
-| **longitude** | Approximate longitude. | Geospatial visualization. |
 | **cidr** | CIDR block covering the IP. | Network grouping and lookup efficiency. |
 
 ---
@@ -66,35 +61,41 @@ Maps IP addresses to **Autonomous System Numbers (ASNs)** and network operators.
 
 ### Lookup Process
 1. **Input** an IP address (e.g., `134.129.111.111`).  
-2. **Query** GeoLite2 databases for **City** and **ASN** data.   
-3. **Combine** all enrichment results into a unified record.
+2. **Query** the local `GeoLite2-ASN.mmdb` and `GeoLite2-City.mmdb` files.
+3. **Combine** the ASN and geographic data into a unified result record.
+
+The handler accepts `ip`, `ipAddress`, `query`, or `ips` values through query
+parameters, JSON bodies, or API Gateway path parameters. Multiple values are
+returned in input order under `results`; invalid values receive an entry-level
+`error`.
 
 You can test this process online at:  
-🔗 **[https://api.lukach.io/geo/geolite2?134.129.111.111](https://api.lukach.io/geo/geolite2?134.129.111.111)**
+[https://api.lukach.io/geo?ip=134.129.111.111](https://api.lukach.io/geo?ip=134.129.111.111)
 
 ### Sample Output
 ```json
 {
-    "ip": "134.129.111.111",
-    "geo": {
-        "country": "United States",
-        "c_iso": "US",
-        "state": "North Dakota",
-        "s_iso": "ND",
-        "city": "Fargo",
-        "zip": "58102",
-        "latitude": 46.9182,
-        "longitude": -96.8313,
-        "cidr": "134.129.96.0/19"
-    },
-    "asn": {
-        "id": 19530,
-        "org": "NDIN-STATE",
-        "net": "134.129.0.0/16"
-    },
+    "results": [
+        {
+            "ip": "134.129.111.111",
+            "geo": {
+                "country": "United States - US",
+                "state": "North Dakota",
+                "city": "Fargo",
+                "cidr": "134.129.96.0/19"
+            },
+            "asn": {
+                "id": 19530,
+                "org": "NDIN-STATE",
+                "net": "134.129.0.0/16"
+            }
+        }
+    ],
+    "requested_count": 1,
     "attribution": "This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com.",
-    "geolite2-asn.mmdb": "Thu, 16 Oct 2025 08:30:04 GMT",
-    "geolite2-city.mmdb": "Tue, 14 Oct 2025 14:46:21 GMT",
+    "geolite2-asn.mmdb": "2025-10-16T08:30:04Z",
+    "geolite2-city.mmdb": "2025-10-14T14:46:21Z",
+    "timestamp_utc": "2026-08-05T00:00:00Z",
     "region": "us-east-1"
 }
 ```
@@ -106,7 +107,7 @@ This unified enrichment result provides **location** and **ownership** in one st
 ## 5. References
 
 - **MaxMind GeoLite2 Developer Documentation**  
-  🔗 [https://dev.maxmind.com/geoip/geolite2-free-geolocation-data](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)
+    [https://dev.maxmind.com/geoip/geolite2-free-geolocation-data](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)
 
 ---
 

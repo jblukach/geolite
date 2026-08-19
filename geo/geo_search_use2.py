@@ -13,14 +13,15 @@ from aws_cdk import (
 
 from constructs import Construct
 
-class GeoliteSearchUSE1(Stack):
+
+class GeoSearchUSE2(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        year = datetime.datetime.now().strftime('%Y')
-        month = datetime.datetime.now().strftime('%m')
-        day = datetime.datetime.now().strftime('%d')
+        year = datetime.datetime.now(datetime.UTC).strftime('%Y')
+        month = datetime.datetime.now(datetime.UTC).strftime('%m')
+        day = datetime.datetime.now(datetime.UTC).strftime('%d')
 
     ### PARAMETERS ###
 
@@ -33,12 +34,12 @@ class GeoliteSearchUSE1(Stack):
 
         bucket = _s3.Bucket.from_bucket_name(
             self, 'bucket',
-            bucket_name = 'packages-use1-lukach-io'
+            bucket_name = 'packages-use2-lukach-io'
         )
 
         staged = _s3.Bucket(
             self, 'staged',
-            bucket_name = 'geolite-staged-use1-lukach-io',
+            bucket_name = 'geo-staged-use2-lukach-io',
             encryption = _s3.BucketEncryption.S3_MANAGED,
             block_public_access = _s3.BlockPublicAccess.BLOCK_ALL,
             removal_policy = RemovalPolicy.DESTROY,
@@ -47,24 +48,7 @@ class GeoliteSearchUSE1(Stack):
             versioned = False
         )
 
-    ### LAMBDA LAYERS ###
-
-        geoip2 = _lambda.LayerVersion(
-            self, 'geoip2',
-            layer_version_name = 'geoip2',
-            description = str(year)+'-'+str(month)+'-'+str(day)+' deployment',
-            code = _lambda.Code.from_bucket(
-                bucket = bucket,
-                key = 'geoip2.zip'
-            ),
-            compatible_architectures = [
-                _lambda.Architecture.ARM_64
-            ],
-            compatible_runtimes = [
-                _lambda.Runtime.PYTHON_3_13
-            ],
-            removal_policy = RemovalPolicy.DESTROY
-        )
+    ### LAMBDA LAYER ###
 
         maxminddb = _lambda.LayerVersion(
             self, 'maxminddb',
@@ -118,11 +102,10 @@ class GeoliteSearchUSE1(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('search'),
             handler = 'search.handler',
-            timeout = Duration.seconds(7),
-            memory_size = 128,
+            timeout = Duration.seconds(30),
+            memory_size = 256,
             role = role,
             layers = [
-                geoip2,
                 maxminddb
             ]
         )
