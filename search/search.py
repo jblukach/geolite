@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote
 
 
-IP_INPUT_KEYS = ("ip", "ipAddress", "query")
+IP_INPUT_KEYS = ("ip",)
 MAX_IPS_PER_REQUEST_ENV = "MAX_IPS_PER_REQUEST"
 MAX_IPS_PER_REQUEST_DEFAULT = 300
 MAX_REQUEST_BODY_BYTES_ENV = "MAX_REQUEST_BODY_BYTES"
@@ -95,16 +95,8 @@ def _decoded_body(event: dict[str, Any]) -> str:
 def _input_ips(event: dict[str, Any]) -> list[str]:
     values: list[str] = []
 
-    path_parameters = event.get("pathParameters") or {}
-    path_parameter_supplied = False
-    if isinstance(path_parameters, dict):
-        if path_parameters.get("ip") is not None or path_parameters.get("proxy") is not None:
-            path_parameter_supplied = True
-        _append_ip_values(values, path_parameters.get("ip"))
-        _append_ip_values(values, path_parameters.get("proxy"))
-
     raw_path = event.get("rawPath")
-    if not path_parameter_supplied and isinstance(raw_path, str) and raw_path.strip():
+    if isinstance(raw_path, str) and raw_path.strip():
         path = raw_path.strip().rstrip("/")
         if "/geo/" in path:
             _append_ip_values(values, unquote(path.rsplit("/", 1)[-1]))
@@ -116,18 +108,6 @@ def _input_ips(event: dict[str, Any]) -> list[str]:
         for key in IP_INPUT_KEYS:
             for raw_value in raw_query_values.get(key, []):
                 _append_ip_values(values, raw_value)
-
-    multi_value_query_params = event.get("multiValueQueryStringParameters") or {}
-    if isinstance(multi_value_query_params, dict):
-        for key in IP_INPUT_KEYS:
-            _append_ip_values(values, multi_value_query_params.get(key))
-
-    query_params = event.get("queryStringParameters") or {}
-    if isinstance(query_params, dict):
-        for key in IP_INPUT_KEYS:
-            if key in raw_query_values:
-                continue
-            _append_ip_values(values, query_params.get(key))
 
     for key in IP_INPUT_KEYS:
         _append_ip_values(values, event.get(key))
@@ -180,11 +160,8 @@ def _is_http_event(event: dict[str, Any]) -> bool:
         for key in (
             "body",
             "headers",
-            "httpMethod",
             "rawPath",
             "rawQueryString",
-            "queryStringParameters",
-            "multiValueQueryStringParameters",
             "requestContext",
         )
     )

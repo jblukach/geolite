@@ -20,9 +20,9 @@ curl 'https://api.lukach.io/geo?ip=1.1.1.1,2606:4700:4700::1111'
 curl 'https://api.lukach.io/geo/1.1.1.1'
 ```
 
-`GET /geo` without an IP looks up the request source address. Query parameters accept `ip`, `ipAddress`, or `query`; they may be repeated or comma-separated.
+`GET /geo` without an IP looks up the request source address. The `ip` query parameter may be repeated or comma-separated.
 
-`POST` accepts a JSON object containing `ip`, `ipAddress`, `query`, or `ips`.
+`POST` accepts a JSON object containing `ip` or `ips`.
 
 ```bash
 curl --request POST 'https://api.lukach.io/geo' \

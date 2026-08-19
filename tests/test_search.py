@@ -87,7 +87,7 @@ class SearchHandlerTests(unittest.TestCase):
         )
 
     def test_json_keys_and_path_and_get_fallback_supported(self):
-        body_response = self._invoke({'body': json.dumps({'ipAddress': '198.51.100.3', 'query': '198.51.100.4'})})
+        body_response = self._invoke({'body': json.dumps({'ip': '198.51.100.3', 'ips': ['198.51.100.4']})})
         self.assertEqual(body_response['statusCode'], 200)
         body_payload = json.loads(body_response['body'])
         self.assertEqual([entry['ip'] for entry in body_payload['results']], ['198.51.100.3', '198.51.100.4'])
@@ -106,6 +106,16 @@ class SearchHandlerTests(unittest.TestCase):
         self.assertEqual(fallback_response['statusCode'], 200)
         fallback_payload = json.loads(fallback_response['body'])
         self.assertEqual(fallback_payload['results'][0]['ip'], '203.0.113.10')
+
+    def test_legacy_input_formats_are_not_supported(self):
+        alias_response = self._invoke({'body': json.dumps({'ipAddress': '198.51.100.3', 'query': '198.51.100.4'})})
+        self.assertEqual(alias_response['statusCode'], 400)
+
+        v1_response = self._invoke({'queryStringParameters': {'ip': '198.51.100.5'}})
+        self.assertEqual(v1_response['error'], 'At least one IP address is required')
+
+        path_response = self._invoke({'pathParameters': {'ip': '198.51.100.6'}})
+        self.assertEqual(path_response['error'], 'At least one IP address is required')
 
     def test_results_include_per_entry_errors_and_preserve_order(self):
         response = self._invoke({'ips': ['198.51.100.1', 'bad-ip', '198.51.100.2']})
