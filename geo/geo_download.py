@@ -88,7 +88,7 @@ class GeoDownload(Stack):
 
         deployment = _deployment.BucketDeployment(
             self, 'DeployFunctionFile',
-            sources = [_deployment.Source.asset('code')],
+            sources = [_deployment.Source.asset('search', exclude=['*', '!search.py'])],
             destination_bucket = staged,
             prune = False
         )

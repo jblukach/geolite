@@ -1,124 +1,117 @@
-# IP Intelligence Enrichment with GeoLite2 Databases
+# Geo IP Intelligence
 
-## Overview
+Geo enriches IPv4 and IPv6 addresses with ASN ownership and GeoLite2 city data. It works as a conventional HTTP API, an MCP tool, and a Lambda function invoked by other workloads.
 
-The **GeoLite2** databases (by **MaxMind**) provides a framework for **IP enrichment and intelligence**.  
+Each successful lookup includes:
 
-- **GeoLite2-City.mmdb**: Adds *geographic context* — where an IP is located.  
-- **GeoLite2-ASN.mmdb**: Adds *organizational context* — who owns or operates the IP range.   
+- `asn.id`, `asn.org`, and `asn.net` from GeoLite2 ASN.
+- `geo.country`, `geo.state`, `geo.city`, and `geo.cidr` from GeoLite2 City.
+- Version timestamps, serving region, and the required MaxMind attribution.
 
-Combining these sources delivers a **two-dimensional understanding** of IP data: **geographical** and **organizational**, supporting use cases in **cybersecurity**, **fraud detection**, **analytics**, and **network engineering**.
+Invalid addresses are returned in order with an entry-level `error`, so batch callers can retain their input-to-output mapping.
 
----
+## HTTP API
 
-## 1. GeoLite2-City.mmdb
+The public endpoint is `https://api.lukach.io/geo`.
 
-### Purpose
-Maps an IP address to its **geographic attributes** down to the **city** level.
+```bash
+curl 'https://api.lukach.io/geo?ip=1.1.1.1'
+curl 'https://api.lukach.io/geo?ip=1.1.1.1,2606:4700:4700::1111'
+curl 'https://api.lukach.io/geo/1.1.1.1'
+```
 
-### Field Descriptions
+`GET /geo` without an IP looks up the request source address. Query parameters accept `ip`, `ipAddress`, or `query`; they may be repeated or comma-separated.
 
-| **Field** | **Description** | **Use** |
-|------------|------------------|---------|
-| **country** | Country name followed by its ISO code when available. | Regional reporting, policy enforcement. |
-| **state** | State or region name. | Regional segmentation or service routing. |
-| **city** | City associated with the IP. | Targeted analytics, fraud prevention. |
-| **cidr** | CIDR block covering the IP. | Network grouping and lookup efficiency. |
+`POST` accepts a JSON object containing `ip`, `ipAddress`, `query`, or `ips`.
 
----
+```bash
+curl --request POST 'https://api.lukach.io/geo' \
+    --header 'content-type: application/json' \
+    --data '{"ips":["1.1.1.1","8.8.8.8"]}'
+```
 
-## 2. GeoLite2-ASN.mmdb
+An HTTP response has an API Gateway status code and a JSON body. Empty input and too many addresses return `400`; an oversized request body returns `413`; a request too close to the Lambda timeout returns `503`.
 
-### Purpose
-Maps IP addresses to **Autonomous System Numbers (ASNs)** and network operators.
+## MCP
 
-### Field Descriptions
+The handler supports MCP JSON-RPC `POST` requests using protocol version `2025-03-26`. The MCP tool is named `geo_lookup`.
+The public MCP gateway is `https://api.lukach.io/mcp?endpoint=geo`.
 
-| **Field** | **Description** | **Use** |
-|------------|------------------|---------|
-| **asn** | Unique identifier for the network (Autonomous System Number). | ISP or organization attribution. |
-| **org** | Organization operating the ASN. | Ownership and routing analysis. |
-| **net** | CIDR block of the ASN’s network. | Defines network boundaries for correlation. |
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+        "name": "geo_lookup",
+        "arguments": {
+            "ips": ["1.1.1.1", "2606:4700:4700::1111"]
+        }
+    }
+}
+```
 
----
+Supported methods are `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. `geo_lookup` accepts either `ip` (one address) or `ips` (an array). Successful tool calls return both MCP text content and `structuredContent`, allowing MCP clients to use the result without parsing text.
 
-## 3. Integrated IP Intelligence Workflow
+## Direct Lambda Invocation
 
-| **Data Source** | **Question Answered** | **Example Insight** |
-|------------------|------------------------|----------------------|
-| **GeoLite2-City** | *Where is the IP located?* | Fargo, North Dakota, United States |
-| **GeoLite2-ASN** | *Who owns the network?* | ASN 19530 — NDIN-STATE |
+The deployed function is named `search`. A direct event contains the same input keys as HTTP JSON, and returns the enrichment payload directly rather than an API Gateway envelope.
 
-### Common Applications
-- **Cybersecurity:** Identify malicious or anomalous public IPs by ASN and location.  
-- **Fraud Detection:** Correlate user activity with IP ownership and geolocation.  
-- **Network Engineering:** Understand IP scope and routing properties.  
-- **Analytics:** Combine region and ownership data for insight segmentation.  
+```python
+import boto3
+import json
 
----
+client = boto3.client("lambda", region_name="us-east-1")
+response = client.invoke(
+        FunctionName="search",
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"ips": ["1.1.1.1", "8.8.8.8"]}),
+)
+payload = json.load(response["Payload"])
+```
 
-## 4. How to Use
+The caller's Lambda execution role needs `lambda:InvokeFunction` for the `search` function ARN. The CDK stacks grant invoke access to principals in the configured AWS Organization; cross-organization callers require an explicit resource-policy grant.
 
-### Lookup Process
-1. **Input** an IP address (e.g., `134.129.111.111`).  
-2. **Query** the local `GeoLite2-ASN.mmdb` and `GeoLite2-City.mmdb` files.
-3. **Combine** the ASN and geographic data into a unified result record.
+For in-process Python callers, import `lookup` from `search.search` and call `lookup({"ips": [...]})`.
 
-The handler accepts `ip`, `ipAddress`, `query`, or `ips` values through query
-parameters, JSON bodies, or API Gateway path parameters. Multiple values are
-returned in input order under `results`; invalid values receive an entry-level
-`error`.
+## Response
 
-You can test this process online at:  
-[https://api.lukach.io/geo?ip=134.129.111.111](https://api.lukach.io/geo?ip=134.129.111.111)
-
-### Sample Output
 ```json
 {
     "results": [
         {
-            "ip": "134.129.111.111",
-            "geo": {
-                "country": "United States - US",
-                "state": "North Dakota",
-                "city": "Fargo",
-                "cidr": "134.129.96.0/19"
-            },
+            "ip": "1.1.1.1",
             "asn": {
-                "id": 19530,
-                "org": "NDIN-STATE",
-                "net": "134.129.0.0/16"
+                "id": 13335,
+                "org": "Cloudflare, Inc.",
+                "net": "1.1.1.0/24"
+            },
+            "geo": {
+                "country": "Australia - AU",
+                "state": "Queensland",
+                "city": "South Brisbane",
+                "cidr": "1.1.1.0/24"
             }
         }
     ],
     "requested_count": 1,
     "attribution": "This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com.",
-    "geolite2-asn.mmdb": "2025-10-16T08:30:04Z",
-    "geolite2-city.mmdb": "2025-10-14T14:46:21Z",
-    "timestamp_utc": "2026-08-05T00:00:00Z",
+    "timestamp_utc": "2026-08-19T00:00:00Z",
     "region": "us-east-1"
 }
 ```
 
-This unified enrichment result provides **location** and **ownership** in one structured record.
+The `geolite2-asn.mmdb` and `geolite2-city.mmdb` fields are included when database metadata is available.
 
----
+## Limits and Development
 
-## 5. References
+The defaults are 300 IPs per request, a 256 KiB request body, and a 1.5 second minimum remaining Lambda execution budget. Configure these with `MAX_IPS_PER_REQUEST`, `MAX_REQUEST_BODY_BYTES`, and `MIN_REMAINING_TIME_MS`.
 
-- **MaxMind GeoLite2 Developer Documentation**  
-    [https://dev.maxmind.com/geoip/geolite2-free-geolocation-data](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)
+Run the focused handler tests with:
 
----
+```bash
+python -m unittest tests/test_search.py -v
+```
 
-## Conclusion
-
-The integration of **GeoLite2-City** and **GeoLite2-ASN** module creates a comprehensive, layered understanding of IP data:
-
-| **Layer** | **Source** | **Insight** |
-|------------|-------------|-------------|
-| **Geographical** | GeoLite2-City | Where the IP is located |
-| **Organizational** | GeoLite2-ASN | Who owns or operates the IP |
-
-Together, these tools provide the foundation for a powerful **IP enrichment pipeline**, enabling accurate, two-dimensional insights across **security**, **analytics**, and **infrastructure monitoring**.
+GeoLite2 data is created by MaxMind. See the [GeoLite2 documentation](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) for database details and licensing.
 

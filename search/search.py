@@ -174,6 +174,70 @@ def _error_payload(message: str) -> dict[str, Any]:
     return {"error": message}
 
 
+def _is_http_event(event: dict[str, Any]) -> bool:
+    return any(
+        key in event
+        for key in (
+            "body",
+            "headers",
+            "httpMethod",
+            "rawPath",
+            "rawQueryString",
+            "queryStringParameters",
+            "multiValueQueryStringParameters",
+            "requestContext",
+        )
+    )
+
+
+def _mcp_request(event: dict[str, Any]) -> dict[str, Any] | None:
+    body = _decoded_body(event)
+    if not body.strip():
+        return None
+
+    try:
+        request = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+
+    if isinstance(request, dict) and request.get("jsonrpc") == "2.0" and isinstance(request.get("method"), str):
+        return request
+    return None
+
+
+def _mcp_response(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return _response(200, {"jsonrpc": "2.0", "id": request_id, "result": result})
+
+
+def _mcp_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
+    return _response(
+        200,
+        {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}},
+    )
+
+
+def _mcp_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "geo_lookup",
+            "description": "Look up GeoLite2 ASN and location data for one or more IP addresses.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ip": {"type": "string", "description": "One IPv4 or IPv6 address."},
+                    "ips": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "IP addresses to look up, in result order.",
+                    },
+                },
+                "anyOf": [{"required": ["ip"]}, {"required": ["ips"]}],
+                "additionalProperties": False,
+            },
+        }
+    ]
+
+
 def _compact_dict(payload: dict[str, Any]) -> dict[str, Any]:
     compacted = {}
     for key, value in payload.items():
@@ -262,28 +326,28 @@ def _lookup_mmdb(readers: dict[str, Any], ip_text: str) -> tuple[dict[str, Any] 
     return (asn_payload or None), (city_payload or None)
 
 
-def handler(event, context):
+def _lookup(event: dict[str, Any], context: Any) -> tuple[int, dict[str, Any]]:
     min_remaining_ms = _min_remaining_time_ms()
 
-    body_text = _decoded_body(event or {})
+    body_text = _decoded_body(event)
     if body_text:
         raw_body_bytes = len(body_text.encode("utf-8"))
         max_body_bytes = _max_request_body_bytes()
         if raw_body_bytes > max_body_bytes:
-            return _response(
+            return (
                 413,
                 _error_payload(
                     f"Request body too large: {raw_body_bytes} bytes. Maximum allowed is {max_body_bytes}"
                 ),
             )
 
-    input_ips = _input_ips(event or {})
+    input_ips = _input_ips(event)
     if not input_ips:
-        return _response(400, _error_payload("At least one IP address is required"))
+        return 400, _error_payload("At least one IP address is required")
 
     max_ips_per_request = _max_ips_per_request()
     if len(input_ips) > max_ips_per_request:
-        return _response(
+        return (
             400,
             _error_payload(
                 f"Too many IPs requested: {len(input_ips)}. Maximum allowed is {max_ips_per_request}"
@@ -291,7 +355,7 @@ def handler(event, context):
         )
 
     if not _has_processing_budget(context, min_remaining_ms):
-        return _response(
+        return (
             503,
             _error_payload("Insufficient processing time remaining. Reduce batch size and retry."),
         )
@@ -323,7 +387,7 @@ def handler(event, context):
                 readers = {"asn": asn_reader, "city": city_reader}
                 for ip_text in unique_valid_ips:
                     if not _has_processing_budget(context, min_remaining_ms):
-                        return _response(
+                        return (
                             503,
                             _error_payload(
                                 "Insufficient processing time remaining. Reduce batch size and retry."
@@ -363,4 +427,62 @@ def handler(event, context):
     response_payload["timestamp_utc"] = now_utc
     response_payload["region"] = os.environ.get("AWS_REGION")
 
-    return _response(200, _compact_dict(response_payload))
+    return 200, _compact_dict(response_payload)
+
+
+def lookup(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
+    """Return GeoLite2 enrichment data for direct Lambda callers."""
+    _, payload = _lookup(event or {}, context)
+    return payload
+
+
+def _handle_mcp(request: dict[str, Any], context: Any) -> dict[str, Any]:
+    request_id = request.get("id")
+    method = request["method"]
+
+    if method == "initialize":
+        return _mcp_response(
+            request_id,
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "geo", "version": "1.0.0"},
+            },
+        )
+    if method == "notifications/initialized":
+        return _response(202, {})
+    if method == "tools/list":
+        return _mcp_response(request_id, {"tools": _mcp_tools()})
+    if method != "tools/call":
+        return _mcp_error(request_id, -32601, f"Method not found: {method}")
+
+    params = request.get("params")
+    if not isinstance(params, dict) or params.get("name") != "geo_lookup":
+        return _mcp_error(request_id, -32602, "Unknown tool. Use geo_lookup.")
+
+    arguments = params.get("arguments", {})
+    if not isinstance(arguments, dict):
+        return _mcp_error(request_id, -32602, "Tool arguments must be an object.")
+
+    status_code, payload = _lookup(arguments, context)
+    payload_text = json.dumps(payload, separators=(",", ":"))
+    return _mcp_response(
+        request_id,
+        {
+            "content": [{"type": "text", "text": payload_text}],
+            "structuredContent": payload,
+            "isError": status_code >= 400,
+        },
+    )
+
+
+def handler(event, context):
+    request_event = event or {}
+    mcp_request = _mcp_request(request_event)
+    if mcp_request is not None:
+        return _handle_mcp(mcp_request, context)
+
+    status_code, payload = _lookup(request_event, context)
+    if _is_http_event(request_event):
+        return _response(status_code, payload)
+    return payload

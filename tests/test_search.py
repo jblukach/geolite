@@ -109,23 +109,21 @@ class SearchHandlerTests(unittest.TestCase):
 
     def test_results_include_per_entry_errors_and_preserve_order(self):
         response = self._invoke({'ips': ['198.51.100.1', 'bad-ip', '198.51.100.2']})
-        self.assertEqual(response['statusCode'], 200)
-        body = json.loads(response['body'])
-        self.assertEqual([entry['ip'] for entry in body['results']], ['198.51.100.1', 'bad-ip', '198.51.100.2'])
-        self.assertIn('error', body['results'][1])
+        self.assertEqual([entry['ip'] for entry in response['results']], ['198.51.100.1', 'bad-ip', '198.51.100.2'])
+        self.assertIn('error', response['results'][1])
 
     def test_valid_ips_are_deduplicated_for_lookup_volume(self):
         response = self._invoke({'ips': ['198.51.100.1', '198.51.100.1', '198.51.100.2']})
-        self.assertEqual(response['statusCode'], 200)
+        self.assertEqual(response['requested_count'], 3)
         # 2 unique valid IPs x 2 readers (asn + city)
         self.assertEqual(len(self.calls), 4)
 
     def test_returns_400_for_empty_and_oversized(self):
         empty_response = self._invoke({})
-        self.assertEqual(empty_response['statusCode'], 400)
+        self.assertEqual(empty_response['error'], 'At least one IP address is required')
 
         oversized_response = self._invoke({'ips': ['198.51.100.1', '198.51.100.2']}, MAX_IPS_PER_REQUEST='1')
-        self.assertEqual(oversized_response['statusCode'], 400)
+        self.assertIn('Too many IPs requested', oversized_response['error'])
 
     def test_returns_413_for_request_body_too_large(self):
         response = self._invoke(
@@ -140,15 +138,57 @@ class SearchHandlerTests(unittest.TestCase):
                 return 100
 
         response = self._invoke({'ips': ['198.51.100.1']}, context=_Context(), MIN_REMAINING_TIME_MS='500')
-        self.assertEqual(response['statusCode'], 503)
+        self.assertIn('Insufficient processing time remaining', response['error'])
 
     def test_outputs_utc_timestamps(self):
         response = self._invoke({'ips': ['198.51.100.1']})
-        self.assertEqual(response['statusCode'], 200)
-        body = json.loads(response['body'])
+        body = response
         self.assertTrue(body['geolite2-asn.mmdb'].endswith('Z'))
         self.assertTrue(body['geolite2-city.mmdb'].endswith('Z'))
         self.assertTrue(body['timestamp_utc'].endswith('Z'))
+
+    def test_direct_lambda_event_returns_lookup_payload(self):
+        response = self._invoke({'ips': ['198.51.100.1']})
+        self.assertEqual(response['requested_count'], 1)
+        self.assertEqual(response['results'][0]['ip'], '198.51.100.1')
+
+    def test_mcp_initialize_list_and_tool_call(self):
+        initialize_response = self._invoke(
+            {
+                'body': json.dumps(
+                    {
+                        'jsonrpc': '2.0',
+                        'id': 1,
+                        'method': 'initialize',
+                        'params': {'protocolVersion': '2025-03-26'},
+                    }
+                )
+            }
+        )
+        self.assertEqual(initialize_response['statusCode'], 200)
+        initialize_payload = json.loads(initialize_response['body'])
+        self.assertEqual(initialize_payload['result']['protocolVersion'], '2025-03-26')
+
+        list_response = self._invoke(
+            {'body': json.dumps({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}})}
+        )
+        list_payload = json.loads(list_response['body'])
+        self.assertEqual(list_payload['result']['tools'][0]['name'], 'geo_lookup')
+
+        call_response = self._invoke(
+            {
+                'body': json.dumps(
+                    {
+                        'jsonrpc': '2.0',
+                        'id': 3,
+                        'method': 'tools/call',
+                        'params': {'name': 'geo_lookup', 'arguments': {'ips': ['198.51.100.1']}},
+                    }
+                )
+            }
+        )
+        call_payload = json.loads(call_response['body'])
+        self.assertEqual(call_payload['result']['structuredContent']['results'][0]['ip'], '198.51.100.1')
 
 
 if __name__ == '__main__':
