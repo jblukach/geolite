@@ -29,6 +29,11 @@ class GeoSearchUSW2(Stack):
             parameter_name = '/organization/id'
         )
 
+        apiaccount = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'apiaccount',
+            parameter_name = '/account/api'
+        )
+
     ### S3 BUCKET ###
 
         bucket = _s3.Bucket.from_bucket_name(
@@ -81,17 +86,6 @@ class GeoSearchUSW2(Stack):
             )
         )
 
-        role.add_to_policy(
-            _iam.PolicyStatement(
-                actions = [
-                    'apigateway:GET'
-                ],
-                resources = [
-                    '*'
-                ]
-            )
-        )
-
     ### LAMBDA FUNCTION ###
 
         search = _lambda.Function(
@@ -104,17 +98,23 @@ class GeoSearchUSW2(Stack):
             timeout = Duration.seconds(30),
             memory_size = 256,
             role = role,
+            reserved_concurrent_executions = 10,
             layers = [
                 maxminddb
             ]
         )
 
-        composite = _iam.CompositePrincipal(
-            _iam.OrganizationPrincipal(organization.string_value),
-            _iam.ServicePrincipal('apigateway.amazonaws.com')
+        search.grant_invoke(
+            _iam.OrganizationPrincipal(organization.string_value)
         )
 
-        search.grant_invoke_composite_principal(composite)
+        search.add_permission(
+            'AllowApiGatewayServiceInvoke',
+            principal = _iam.ServicePrincipal('apigateway.amazonaws.com'),
+            action = 'lambda:InvokeFunction',
+            source_account = apiaccount.string_value,
+            source_arn = 'arn:aws:execute-api:'+Stack.of(self).region+':'+apiaccount.string_value+':*/*/*/geo*'
+        )
 
         logs = _logs.LogGroup(
             self, 'logs',
