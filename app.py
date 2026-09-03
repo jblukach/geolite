@@ -11,7 +11,7 @@ from geo.geo_stack import GeoStack
 
 app = cdk.App()
 
-GeoDownload(
+geo_download = GeoDownload(
     app,
     'GeoDownload',
     env=cdk.Environment(
@@ -23,7 +23,7 @@ GeoDownload(
     ),
 )
 
-GeoSearchUSE1(
+geo_search_use1 = GeoSearchUSE1(
     app,
     'GeoSearchUSE1',
     env=cdk.Environment(
@@ -35,7 +35,7 @@ GeoSearchUSE1(
     ),
 )
 
-GeoSearchUSW2(
+geo_search_usw2 = GeoSearchUSW2(
     app,
     'GeoSearchUSW2',
     env=cdk.Environment(
@@ -47,7 +47,7 @@ GeoSearchUSW2(
     ),
 )
 
-GeoSearchUSE2(
+geo_search_use2 = GeoSearchUSE2(
     app,
     'GeoSearchUSE2',
     env=cdk.Environment(
@@ -59,7 +59,7 @@ GeoSearchUSE2(
     ),
 )
 
-GeoStack(
+geo_stack = GeoStack(
     app,
     'GeoStack',
     env=cdk.Environment(
@@ -70,6 +70,11 @@ GeoStack(
         qualifier='lukach',
     ),
 )
+
+geo_download.add_stack_dependency(geo_search_use1)
+geo_download.add_stack_dependency(geo_search_usw2)
+geo_download.add_stack_dependency(geo_search_use2)
+geo_download.add_stack_dependency(geo_stack)
 
 cdk.Tags.of(app).add('Alias', 'geo')
 cdk.Tags.of(app).add('GitHub', 'https://github.com/jblukach/geo')

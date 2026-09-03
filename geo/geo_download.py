@@ -6,6 +6,7 @@ from aws_cdk import (
     SecretValue,
     Size,
     Stack,
+    triggers as _triggers,
     aws_events as _events,
     aws_events_targets as _targets,
     aws_iam as _iam,
@@ -177,6 +178,8 @@ class GeoDownload(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions = [
+                    'lambda:GetFunction',
+                    'lambda:GetFunctionConfiguration',
                     'lambda:UpdateFunctionCode',
                     's3:GetObject',
                     's3:PutObject',
@@ -193,8 +196,9 @@ class GeoDownload(Stack):
 
     ### LAMBDA FUNCTION ###
 
-        download = _lambda.Function(
+        download = _triggers.TriggerFunction(
             self, 'download',
+            function_name = 'geodownload',
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('download'),

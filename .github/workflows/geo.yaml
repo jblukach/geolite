@@ -6,7 +6,7 @@ on:
   schedule:
     - cron:  '0 2 1 * *'
 jobs:
-  deploy:
+  search:
     strategy:
       fail-fast: false
       matrix:
@@ -14,7 +14,7 @@ jobs:
           - aws_region: us-east-1
             stacks: GeoSearchUSE1 GeoStack
           - aws_region: us-east-2
-            stacks: GeoDownload GeoSearchUSE2
+            stacks: GeoSearchUSE2
           - aws_region: us-west-2
             stacks: GeoSearchUSW2
     runs-on:
@@ -37,3 +37,26 @@ jobs:
       - run: pip install -r requirements.txt --upgrade
       - run: python -m unittest discover -s tests -p 'test_*.py'
       - run: cdk deploy ${{ matrix.stacks }} --require-approval never
+
+  download:
+    needs: search
+    runs-on:
+      - codebuild-geo-${{ github.run_id }}-${{ github.run_attempt }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.ROLE }}
+          aws-region: us-east-2
+      - run: npm install -g aws-cdk
+      - run: npm install -g aws-cdk-lib
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt --upgrade
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: cdk deploy GeoDownload --require-approval never

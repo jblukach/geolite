@@ -101,16 +101,34 @@ For in-process Python callers, import `lookup` from `search.search` and call `lo
 }
 ```
 
-The `geolite2-asn.mmdb` and `geolite2-city.mmdb` fields are included when database metadata is available.
+The `geolite2-asn.mmdb` and `geolite2-city.mmdb` fields are included when database metadata is available. `timestamp_utc` is when the request was served, not a database version.
+
+## Deployment
+
+The `geodownload` function in `us-east-2` runs hourly, packages the GeoLite2 databases with `search.py`, and pushes the result to the `search` function in `us-east-1`, `us-east-2`, and `us-west-2` with `update_function_code`.
+
+Because `GeoDownload` is implemented as a `TriggerFunction` and depends on all search stacks, running `cdk deploy` automatically triggers `geodownload` as the final step of deployment to seed the databases across all regions:
+
+```bash
+cdk deploy --profile geo --all
+```
+
+If needed, `geodownload` can still be invoked manually:
+
+```bash
+aws lambda invoke --function-name geodownload --region us-east-2 --profile geo response.json
+```
+
+The function raises an error naming the region and reason if any of the three updates fails, so a non-empty `FunctionError` in the response means the databases did not reach every region.
 
 ## Limits and Development
 
 The defaults are 300 IPs per request, a 256 KiB request body, and a 1.5 second minimum remaining Lambda execution budget. Configure these with `MAX_IPS_PER_REQUEST`, `MAX_REQUEST_BODY_BYTES`, and `MIN_REMAINING_TIME_MS`.
 
-Run the focused handler tests with:
+Run the tests with:
 
 ```bash
-python -m unittest tests/test_search.py -v
+python -m unittest discover -s tests -v
 ```
 
 GeoLite2 data is created by MaxMind. See the [GeoLite2 documentation](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) for database details and licensing.

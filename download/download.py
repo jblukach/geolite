@@ -1,4 +1,6 @@
+import base64
 import boto3
+import hashlib
 import json
 import os
 import tarfile
@@ -8,8 +10,16 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
+REGIONS = (
+    ('us-east-1', 'S3_USE1', 'LAMBDA_FUNCTION_USE1'),
+    ('us-east-2', 'S3_USE2', 'LAMBDA_FUNCTION_USE2'),
+    ('us-west-2', 'S3_USW2', 'LAMBDA_FUNCTION_USW2')
+)
+
 def handler(event, context):
     del event, context
+
+    pending_parameters = []
 
     secret = boto3.client('secretsmanager')
 
@@ -83,12 +93,7 @@ def handler(event, context):
         s3_client.upload_file('/tmp/city.updated', os.environ['S3_STAGED'], 'city.updated')
         s3_client.upload_file('/tmp/GeoLite2-City.mmdb', os.environ['S3_STAGED'], 'GeoLite2-City.mmdb')
 
-        ssm.put_parameter(
-            Name = os.environ['SSM_PARAMETER_CITY'],
-            Value = city_timestamp_utc,
-            Type = 'String',
-            Overwrite = True
-        )
+        pending_parameters.append((os.environ['SSM_PARAMETER_CITY'], city_timestamp_utc))
 
     url = 'https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz'
     update = requests.head(url, auth=(login['api'], login['key']), timeout=60)
@@ -114,12 +119,7 @@ def handler(event, context):
         s3_client.upload_file('/tmp/asn.updated', os.environ['S3_STAGED'], 'asn.updated')
         s3_client.upload_file('/tmp/GeoLite2-ASN.mmdb', os.environ['S3_STAGED'], 'GeoLite2-ASN.mmdb')
 
-        ssm.put_parameter(
-            Name = os.environ['SSM_PARAMETER_ASN'],
-            Value = asn_timestamp_utc,
-            Type = 'String',
-            Overwrite = True
-    )
+        pending_parameters.append((os.environ['SSM_PARAMETER_ASN'], asn_timestamp_utc))
 
     print("Copying GeoLite2-ASN.mmdb")
 
@@ -141,6 +141,10 @@ def handler(event, context):
 
     print("Packaging maxminddb.zip")
 
+    for mmdb in ('/tmp/GeoLite2-ASN.mmdb', '/tmp/GeoLite2-City.mmdb'):
+        if os.path.getsize(mmdb) == 0:
+            raise RuntimeError(f'{mmdb} is empty')
+
     with zipfile.ZipFile('/tmp/maxminddb.zip', 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zipf:
 
         zipf.write('/tmp/asn.updated','asn.updated')
@@ -153,47 +157,75 @@ def handler(event, context):
 
     s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_STAGED'], 'maxminddb.zip')
 
-    s3_client = boto3.client('s3', region_name = 'us-east-1')
+    digest = hashlib.sha256()
+    with open('/tmp/maxminddb.zip', 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            digest.update(chunk)
+    expected_sha256 = base64.b64encode(digest.digest()).decode('utf-8')
 
-    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_USE1'], 'maxminddb.zip')
+    print('Package SHA256:', expected_sha256)
 
-    s3_client = boto3.client('s3', region_name = 'us-east-2')
+    failures = []
 
-    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_USE2'], 'maxminddb.zip')
- 
-    s3_client = boto3.client('s3', region_name = 'us-west-2')
+    for region, bucket_variable, function_variable in REGIONS:
 
-    s3_client.upload_file('/tmp/maxminddb.zip', os.environ['S3_USW2'], 'maxminddb.zip')
+        bucket = os.environ[bucket_variable]
+        function = os.environ[function_variable]
 
-    client = boto3.client('lambda', region_name = 'us-east-1')
+        try:
 
-    print("Updating "+os.environ['LAMBDA_FUNCTION_USE1'])
+            boto3.client('s3', region_name = region).upload_file(
+                '/tmp/maxminddb.zip', bucket, 'maxminddb.zip'
+            )
 
-    client.update_function_code(
-        FunctionName = os.environ['LAMBDA_FUNCTION_USE1'],
-        S3Bucket = os.environ['S3_USE1'],
-        S3Key = 'maxminddb.zip'
-    )
+            print('Updating '+function)
 
-    client = boto3.client('lambda', region_name = 'us-east-2')
+            client = boto3.client('lambda', region_name = region)
 
-    print("Updating "+os.environ['LAMBDA_FUNCTION_USE2'])
+            client.update_function_code(
+                FunctionName = function,
+                S3Bucket = bucket,
+                S3Key = 'maxminddb.zip'
+            )
 
-    client.update_function_code(
-        FunctionName = os.environ['LAMBDA_FUNCTION_USE2'],
-        S3Bucket = os.environ['S3_USE2'],
-        S3Key = 'maxminddb.zip'
-    )
+            # update_function_code is asynchronous, so a failed apply is only visible here.
+            client.get_waiter('function_updated_v2').wait(FunctionName = function)
 
-    client = boto3.client('lambda', region_name = 'us-west-2')
+            configuration = client.get_function_configuration(FunctionName = function)
 
-    print("Updating "+os.environ['LAMBDA_FUNCTION_USW2'])
+            status = configuration.get('LastUpdateStatus')
 
-    client.update_function_code(
-        FunctionName = os.environ['LAMBDA_FUNCTION_USW2'],
-        S3Bucket = os.environ['S3_USW2'],
-        S3Key = 'maxminddb.zip'
-    )
+            if status != 'Successful':
+                raise RuntimeError(
+                    f"LastUpdateStatus {status}: "
+                    f"{configuration.get('LastUpdateStatusReasonCode')} "
+                    f"{configuration.get('LastUpdateStatusReason')}"
+                )
+
+            if configuration.get('CodeSha256') != expected_sha256:
+                raise RuntimeError(
+                    f"CodeSha256 {configuration.get('CodeSha256')} "
+                    f"does not match packaged {expected_sha256}"
+                )
+
+            print('Updated '+function)
+
+        except Exception as error:
+
+            print('Failed '+function+': '+repr(error))
+            failures.append(f'{region}: {error!r}')
+
+    if failures:
+        raise RuntimeError('Regional deployment failed -> ' + ' | '.join(failures))
+
+    for name, value in pending_parameters:
+
+        ssm.put_parameter(
+            Name = name,
+            Value = value,
+            Type = 'String',
+            Overwrite = True
+        )
 
     return {
         'statusCode': 200,
